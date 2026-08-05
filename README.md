@@ -93,6 +93,15 @@ for a question, `POST /v1/answer` to submit, `POST /llm/v1/chat/completions` for
 the model. Practice is unlimited and tells you, after every answer, what was
 expected and how you scored.
 
+**Which model answers depends on the tier.** Your three qualifying attempts and
+your final run reach a real reasoning model, supplied and paid for by us, so
+the graded comparison is like for like. Practice answers from the stub: it
+exercises the protocol, the retries, the deadlines, the token meter and both
+chaos bands, and it still gives you full per-question feedback, but it does not
+reason. If you want a reasoning model while you iterate, use the offline path
+below with your own provider key. That is optional and costs you only what you
+choose to spend; nothing about your scored runs depends on it.
+
 Fetch the book and the market once at startup and hold them. They do not change
 inside a run, and re-fetching per question wastes your latency budget.
 
