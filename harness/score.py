@@ -85,6 +85,14 @@ LATENCY_ZERO_MARKS_P95_S = 60.0
 LATENCY_MARKS = 1.0
 AVAILABILITY_FLOOR = 0.80
 ALLOWED_FLAGS = {"conflict", "upstream_issue", "stale_data"}
+# A roster that names a framework is a claim; the gateway meter is evidence.
+# Measured, not guessed: the reference implementation runs at 1.16 model calls
+# per question, and a service that answers entirely by rule runs between 0.01
+# and 0.49. This threshold sits below the reference with margin and above both
+# rule-only runs. It raises a flag for human review, never a penalty: a hybrid
+# deterministic-and-model design can be excellent engineering, and nothing in
+# the brief promises marks for calling a model.
+MODEL_CALLS_MIN_PER_QUESTION = 0.5
 
 RECOMMENDATION_PATTERNS = [
     r"\byou should (buy|sell|invest|switch|move|increase|reduce|exit)\b",
@@ -535,6 +543,8 @@ def score_run(key: dict, leakmap: dict, transcript: list[dict],
 
     billed = int((usage or {}).get("billed_tokens") or 0)
     mean_tokens = billed / max(1, len(delivered))
+    model_calls = int((usage or {}).get("requests") or 0)
+    calls_per_question = model_calls / max(1, len(delivered))
     p95 = _p95(latencies)
     token_marks = _linear(mean_tokens, TOKEN_FULL_MARKS_MEAN,
                           TOKEN_ZERO_MARKS_MEAN, TOKEN_MARKS)
@@ -574,6 +584,23 @@ def score_run(key: dict, leakmap: dict, transcript: list[dict],
             roster_problems.append(
                 f"declared but never appeared in any answer path: {never_used}")
 
+    # The framework is the one part of the roster the harness can corroborate,
+    # and only indirectly: a service built on an agent framework talks to the
+    # model, so a framework claim alongside almost no model traffic is a claim
+    # the run's own meter does not support. Reported, never penalised. Answering
+    # by rule is a legitimate engineering choice; leaving it unstated is what
+    # this surfaces, and it belongs in the conversation, not in the marks.
+    framework_declared = (roster or {}).get("framework") or None
+    framework_uncorroborated = bool(
+        framework_declared
+        and calls_per_question < MODEL_CALLS_MIN_PER_QUESTION)
+    if framework_uncorroborated:
+        roster_problems.append(
+            f"declares framework {framework_declared!r} but the run made "
+            f"{calls_per_question:.2f} model calls per question "
+            f"(under {MODEL_CALLS_MIN_PER_QUESTION}): the gateway meter does "
+            f"not corroborate the claim")
+
     gates = {
         "cross_client_leak": {
             "failed": bool(leaks),
@@ -612,11 +639,15 @@ def score_run(key: dict, leakmap: dict, transcript: list[dict],
             "distinct_roles_observed": len(observed_roles),
             "roster_problems": roster_problems,
             "single_agent_suspected": len(observed_roles) <= 2,
+            "framework_declared": framework_declared,
+            "framework_claim_uncorroborated": framework_uncorroborated,
         },
         "dimensions": {k: round(v, 2) for k, v in dims.items()},
         "dimension_maxima": DIMENSIONS,
         "cost": {"billed_tokens": billed, "mean_billed_per_question":
-                 round(mean_tokens, 1), "marks": round(token_marks, 2)},
+                 round(mean_tokens, 1), "model_calls": model_calls,
+                 "model_calls_per_question": round(calls_per_question, 3),
+                 "marks": round(token_marks, 2)},
         "latency": {"p95_seconds": round(p95, 2), "marks": round(latency_marks, 2)},
         "stability": stability,
         "questions": per_q,
